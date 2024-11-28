@@ -1,14 +1,13 @@
 require("dotenv").config();
-const { Telegraf } = require("telegraf");
+const { Telegraf, Markup } = require("telegraf");
 const { ethers } = require("ethers");
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 const provider = new ethers.JsonRpcProvider(process.env.ETHEREUM_PROVIDER_URL);
 
-// Placeholder for storing group-specific settings and payments
 let groupSettings = {};
 let payments = {};
+let trendingTokens = {};
 
-// Command to start setup
 bot.start((ctx) => {
   const chatId = ctx.chat.id;
   if (!groupSettings[chatId]) {
@@ -20,11 +19,17 @@ bot.start((ctx) => {
     };
   }
   ctx.reply(
-    "Welcome! Use /set_token, /set_threshold, and /set_message to begin."
+    "👋 Welcome! Set up your group with the following options:",
+    Markup.inlineKeyboard([
+      [Markup.button.callback("🔗 Set Token", "set_token")],
+      [Markup.button.callback("📏 Set Threshold", "set_threshold")],
+      [Markup.button.callback("💬 Set Message", "set_message")],
+      [Markup.button.callback("🚫 Remove Ads", "remove_ads")],
+      [Markup.button.callback("📣 Advertise", "advertise")],
+    ])
   );
 });
 
-// Set token address
 bot.command("set_token", (ctx) => {
   const args = ctx.message.text.split(" ");
   if (args.length < 2) return ctx.reply("Usage: /set_token <token_address>");
@@ -34,14 +39,13 @@ bot.command("set_token", (ctx) => {
 
   if (ethers.utils.isAddress(tokenAddress)) {
     groupSettings[chatId].tokenAddress = tokenAddress;
-    startMonitoring(chatId); // Start monitoring when token is set
+    startMonitoring(chatId);
     ctx.reply(`Token address set to ${tokenAddress}`);
   } else {
     ctx.reply("Invalid Ethereum address.");
   }
 });
 
-// Set amount threshold
 bot.command("set_threshold", (ctx) => {
   const args = ctx.message.text.split(" ");
   if (args.length < 2) return ctx.reply("Usage: /set_threshold <amount>");
@@ -57,33 +61,37 @@ bot.command("set_threshold", (ctx) => {
   }
 });
 
-// Set custom message
 bot.command("set_message", (ctx) => {
   const chatId = ctx.chat.id;
   const customMessage = ctx.message.text.split(" ").slice(1).join(" ");
-
   if (customMessage) {
     groupSettings[chatId].customMessage = customMessage;
-    ctx.reply(`Custom message set.`);
+    ctx.reply("Custom message set.");
   } else {
     ctx.reply("Please provide a message.");
   }
 });
 
-// Ad and payment commands (placeholders)
-bot.command("remove_ads", (ctx) => {
-  const chatId = ctx.chat.id;
-  // Placeholder: Adjust payment logic to disable ads
-  ctx.reply("Ad removal feature is not implemented. Add logic here.");
-});
+bot.action("set_token", (ctx) =>
+  ctx.reply("🔗 Enter the token address using: /set_token <address>")
+);
 
-bot.command("advertise", (ctx) => {
-  const chatId = ctx.chat.id;
-  // Placeholder: Provide payment address and process logic
-  ctx.reply("To advertise, send payment to ... (not implemented).");
-});
+bot.action("set_threshold", (ctx) =>
+  ctx.reply("📏 Enter the threshold amount using: /set_threshold <amount>")
+);
 
-// Start monitoring for transactions
+bot.action("set_message", (ctx) =>
+  ctx.reply("💬 Enter the custom message using: /set_message <your_message>")
+);
+
+bot.action("remove_ads", (ctx) =>
+  ctx.reply("🚫 Ad removal feature is not implemented yet.")
+);
+
+bot.action("advertise", (ctx) =>
+  ctx.reply("📣 To advertise, send payment to ... (not implemented).")
+);
+
 async function startMonitoring(chatId) {
   const { tokenAddress, threshold } = groupSettings[chatId];
   if (!tokenAddress || threshold <= 0) return;
@@ -91,24 +99,13 @@ async function startMonitoring(chatId) {
   provider.on("pending", async (txHash) => {
     try {
       const tx = await provider.getTransaction(txHash);
-      if (tx && tx.to === tokenAddress) {
-        const value = ethers.utils.formatEther(tx.value);
-        if (value >= threshold) {
-          let message = `Buy detected: ${value} ETH`;
-
-          if (groupSettings[chatId].customMessage) {
-            message += `\n${groupSettings[chatId].customMessage}`;
+      if (tx) {
+        await processIncomingPayment(tx);
+        if (tx.to === tokenAddress) {
+          const value = ethers.utils.formatEther(tx.value);
+          if (value >= threshold) {
+            displayBuyMessage(chatId, value, tokenAddress);
           }
-
-          if (value >= threshold * 10) {
-            message += " 🐋 Whale detected!";
-          }
-
-          if (groupSettings[chatId].adsEnabled) {
-            message += "\nAdvertisement: Your ad here!";
-          }
-
-          bot.telegram.sendMessage(chatId, message);
         }
       }
     } catch (error) {
@@ -117,10 +114,52 @@ async function startMonitoring(chatId) {
   });
 }
 
-// Launch bot
+function formatTrendingMessage() {
+  return Object.keys(trendingTokens).length > 0
+    ? `\nTrending: ${Object.keys(trendingTokens).join(", ")}`
+    : "\nNo current trends.";
+}
+
+function displayBuyMessage(chatId, value, tokenAddress) {
+  let message = `Buy detected: ${value} ETH`;
+
+  if (groupSettings[chatId].customMessage) {
+    message += `\n${groupSettings[chatId].customMessage}`;
+  }
+
+  if (value >= groupSettings[chatId].threshold * 10) {
+    message += " 🐋 Whale detected!";
+  }
+
+  if (groupSettings[chatId].adsEnabled) {
+    message += "\nAdvertisement: Your ad here!";
+  }
+
+  message += formatTrendingMessage();
+
+  bot.telegram.sendMessage(chatId, message);
+}
+
+async function processIncomingPayment(tx) {
+  const myWalletAddress = process.env.MY_WALLET_ADDRESS;
+  if (tx.to === myWalletAddress) {
+    const value = ethers.utils.formatEther(tx.value);
+    if (value >= 1) {
+      const tokenAddress = determineTokenBasedOnTx(tx);
+      trendingTokens[tokenAddress] = true;
+    }
+    // Implement logic for advertisements and ad removals here based on payment
+  }
+}
+
+function determineTokenBasedOnTx(tx) {
+  // Implement logic to determine which token payment relates to
+  // For demonstration, let's assume you parse it somehow:
+  return "exampleTokenAddress";
+}
+
 bot.launch();
 console.log("Bot is running");
 
-// Graceful shutdown
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
